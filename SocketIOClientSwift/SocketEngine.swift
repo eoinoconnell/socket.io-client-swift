@@ -68,7 +68,7 @@ public final class SocketEngine: NSObject, WebSocketDelegate {
     var urlPolling: String?
     var urlWebSocket: String?
     var ws: WebSocket?
-    
+
     @objc public enum PacketType: Int {
         case Open, Close, Ping, Pong, Message, Upgrade, Noop
 
@@ -177,16 +177,16 @@ public final class SocketEngine: NSObject, WebSocketDelegate {
 
     private func createWebsocket(andConnect connect: Bool) {
         let wsUrl = urlWebSocket! + (sid == "" ? "" : "&sid=\(sid)")
-        
+
         ws = WebSocket(url: NSURL(string: wsUrl)!,
             cookies: cookies)
-        
+
         if extraHeaders != nil {
             for (headerName, value) in extraHeaders! {
                 ws?.headers[headerName] = value
             }
         }
-        
+
         ws?.queue = handleQueue
         ws?.delegate = self
 
@@ -221,13 +221,13 @@ public final class SocketEngine: NSObject, WebSocketDelegate {
             let headers = NSHTTPCookie.requestHeaderFieldsWithCookies(cookies!)
             req.allHTTPHeaderFields = headers
         }
-        
+
         if extraHeaders != nil {
             for (headerName, value) in extraHeaders! {
                 req.setValue(value, forHTTPHeaderField: headerName)
             }
         }
-        
+
         doRequest(req)
     }
 
@@ -241,8 +241,8 @@ public final class SocketEngine: NSObject, WebSocketDelegate {
         Logger.log("Doing polling request", type: logType)
 
         session.dataTaskWithRequest(req) {[weak self] data, res, err in
-            if let this = self {
-                if err != nil || data == nil {
+            if let this = self, res = res as? NSHTTPURLResponse {
+                if err != nil || data == nil || res.statusCode == 502 {
                     if this.polling {
                         this.handlePollingFailed(err?.localizedDescription ?? "Error")
                     } else {
@@ -350,7 +350,7 @@ public final class SocketEngine: NSObject, WebSocketDelegate {
     // Send them raw
     private func flushWaitingForPostToWebSocket() {
         guard let ws = self.ws else {return}
-        
+
         for msg in postWait {
             ws.writeString(msg)
         }
@@ -395,18 +395,18 @@ public final class SocketEngine: NSObject, WebSocketDelegate {
 
                 self.sid = sid
                 connected = true
-                
+
                 if let upgrades = json?["upgrades"] as? [String] {
                     upgradeWs = upgrades.filter {$0 == "websocket"}.count != 0
                 } else {
                     upgradeWs = false
                 }
-                
+
                 if let pingInterval = json?["pingInterval"] as? Double, pingTimeout = json?["pingTimeout"] as? Double {
                     self.pingInterval = pingInterval / 1000.0
                     self.pingTimeout = pingTimeout / 1000.0
                 }
-                
+
                 if !forcePolling && !forceWebsockets && upgradeWs {
                     createWebsocket(andConnect: true)
                 }
@@ -450,7 +450,7 @@ public final class SocketEngine: NSObject, WebSocketDelegate {
         if connected {
             Logger.error("Tried to open while connected", type: logType)
             client?.didError("Tried to open while connected")
-            
+
             return
         }
 
@@ -474,13 +474,13 @@ public final class SocketEngine: NSObject, WebSocketDelegate {
             let headers = NSHTTPCookie.requestHeaderFieldsWithCookies(cookies!)
             reqPolling.allHTTPHeaderFields = headers
         }
- 
+
         if let extraHeaders = extraHeaders {
             for (headerName, value) in extraHeaders {
                 reqPolling.setValue(value, forHTTPHeaderField: headerName)
             }
         }
-        
+
         doRequest(reqPolling)
     }
 
@@ -488,13 +488,17 @@ public final class SocketEngine: NSObject, WebSocketDelegate {
         guard str.characters.count != 1 else {
             return
         }
-        
+
         var reader = SocketStringReader(message: str)
-        
+
         while reader.hasNext {
             let n = reader.readUntilStringOccurence(":")
-            let str = reader.read(Int(n)!)
-            
+            guard let readerLength = Int(n) else {
+                Logger.error("Error Parsing response: \(str)", type: logType)
+                return
+            }
+            let str = reader.read(readerLength)
+
             dispatch_async(handleQueue) {
                 self.parseEngineMessage(str, fromPolling: true)
             }
@@ -681,7 +685,7 @@ public final class SocketEngine: NSObject, WebSocketDelegate {
             if error != nil {
                 client?.didError(reason)
             }
-            
+
             client?.engineDidClose(reason)
         } else {
             flushProbeWait()
